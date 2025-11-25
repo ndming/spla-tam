@@ -15,11 +15,11 @@ mapping_window_size = 24
 tracking_iters = 40
 mapping_iters = 60
 
-group_name = "Replica"
-run_name = f"{scene_name}_{seed}"
+group_name = "replica"
+run_name = f"{scene_name}"
 
 config = dict(
-    workdir=f"./experiments/{group_name}",
+    workdir=f"./output/{group_name}",
     run_name=run_name,
     seed=seed,
     primary_device=primary_device,
@@ -46,7 +46,7 @@ config = dict(
         eval_save_qual=True,
     ),
     data=dict(
-        basedir="./data/Replica",
+        basedir="/home/minhnd59/datasets/replica",
         gradslam_data_cfg="./configs/data/replica.yaml",
         sequence=scene_name,
         desired_image_height=680,
