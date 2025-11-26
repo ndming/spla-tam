@@ -3,15 +3,17 @@ import os
 import shutil
 import sys
 import time
+
 from importlib.machinery import SourceFileLoader
+from torch.multiprocessing import Queue
 
 _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 sys.path.insert(0, _BASE_DIR)
 
-print("System Paths:")
-for p in sys.path:
-    print(p)
+# print("System Paths:")
+# for p in sys.path:
+#     print(p)
 
 import cv2
 import matplotlib.pyplot as plt
@@ -123,9 +125,9 @@ def initialize_params(init_pt_cld, num_frames, mean3_sq_dist, gaussian_distribut
     unnorm_rots = np.tile([1, 0, 0, 0], (num_pts, 1)) # [num_gaussians, 4]
     logit_opacities = torch.zeros((num_pts, 1), dtype=torch.float, device="cuda")
     if gaussian_distribution == "isotropic":
-        log_scales = torch.tile(torch.log(torch.sqrt(mean3_sq_dist))[..., None], (1, 1))
+        log_scales = torch.tile(torch.log(torch.sqrt(mean3_sq_dist))[..., None], (1, 1)) # [num_gaussians, 1]
     elif gaussian_distribution == "anisotropic":
-        log_scales = torch.tile(torch.log(torch.sqrt(mean3_sq_dist))[..., None], (1, 3))
+        log_scales = torch.tile(torch.log(torch.sqrt(mean3_sq_dist))[..., None], (1, 3)) # [num_gaussians, 3]
     else:
         raise ValueError(f"Unknown gaussian_distribution {gaussian_distribution}")
     params = {
@@ -452,7 +454,26 @@ def convert_params_to_store(params):
     return params_to_store
 
 
-def rgbd_slam(config: dict):
+@torch.no_grad()
+def submit_snapshot(params, queue: Queue):
+    if queue is None:
+        return
+    
+    log_scales = params["log_scales"]
+    if log_scales.shape[1] == 1:
+        log_scales = log_scales.repeat(1, 3)
+    
+    snapshot = {
+        "means": params["means3D"].detach().cpu(), # (N, 3)
+        "quats": params["unnorm_rotations"].detach().cpu(), # (N, 4)
+        "scales": log_scales.detach().cpu(), # (N, 3)
+        "colors": params["rgb_colors"].detach().cpu(), # (N, 3)
+        "opacities": params["logit_opacities"].detach().cpu(), # (N, 1)
+    }
+    queue.put(snapshot)
+
+
+def rgbd_slam(config: dict, queue=None):
     # Print Config
     print("Loaded Config:")
     if "use_depth_loss_thres" not in config['tracking']:
@@ -879,10 +900,15 @@ def rgbd_slam(config: dict):
                                             mapping=True, online_time_idx=time_idx)
                     else:
                         progress_bar.update(1)
+
                 # Update the runtime numbers
                 iter_end_time = time.time()
                 mapping_iter_time_sum += iter_end_time - iter_start_time
                 mapping_iter_time_count += 1
+
+            # Send new Gaussians to visualization queue
+            submit_snapshot(params, queue)
+
             if num_iters_mapping > 0:
                 progress_bar.close()
             # Update the runtime numbers
